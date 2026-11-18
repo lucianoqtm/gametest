@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Rail Rush 1v1</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; touch-action: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Rail Rush 1v1 — a split-screen endless runner duel.
+// Both players run the same procedurally generated track. Dodge, jump and
+// slide; every 10 coins sends a barrier into your opponent's path.
+// Lose all 3 hearts and you lose the round.
+// ---------------------------------------------------------------------------
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize);
+resize();
+
+// ---- constants -------------------------------------------------------------
+const LANE_W = 2.2;
+const CHUNK = 60;          // world units per generated chunk
+const VIEW = 120;          // draw distance
+const NEAR = 0.6;          // near clip plane
+const CAM_H = 5.5, CAM_D = 5.5;
+const GRAVITY = 30, JUMP_V = 10;
+const STAND_H = 1.75, SLIDE_H = 0.8;
+const START_SPEED = 13, MAX_SPEED = 30, ACCEL = 0.3;
+const COINS_PER_ATTACK = 10;
+
+const FOG = [250, 196, 160];
+const C = {
+  train: [70, 110, 160], trainB: [200, 70, 60], low: [240, 140, 30], bar: [220, 50, 60],
+  post: [120, 120, 130], attack: [170, 70, 230], coin: [255, 205, 40],
+  tie: [90, 70, 55], rail: [190, 190, 200], bed: [110, 98, 88],
+  skin: [240, 200, 160], pants: [40, 45, 60],
+  buildings: [[120, 140, 170], [160, 120, 140], [110, 150, 140], [170, 150, 120], [130, 120, 170]],
+};
+
+// ---- helpers ---------------------------------------------------------------
+function rngFor(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+function mix(c, k, fog) {
+  const r = Math.min(255, c[0] * k), g = Math.min(255, c[1] * k), b = Math.min(255, c[2] * k);
+  return `rgb(${(r + (FOG[0] - r) * fog) | 0},${(g + (FOG[1] - g) * fog) | 0},${(b + (FOG[2] - b) * fog) | 0})`;
+}
+
+// ---- world generation (shared by both players) ------------------------------
+let seed = 1;
+const chunks = new Map();
+
+function makeObs(type, lane, z, id) {
+  if (type === 'train') return { type, lane, z, len: 7, y0: 0, h: 2.7, id };
+  if (type === 'low')   return { type, lane, z, len: 0.4, y0: 0, h: 0.8, id };
+  /* high */            return { type, lane, z, len: 0.3, y0: 1.15, h: 1.2, id };
+}
+
+function getChunk(i) {
+  let ch = chunks.get(i);
+  if (ch) return ch;
+  const r = rngFor(seed * 100003 + i * 7919);
+  const obs = [], coins = [], bldg = [];
+  let n = 0;
+  if (i > 0) {
+    // difficulty ramps: fewer empty lanes deeper in
+    const busy = Math.min(0.85, 0.55 + i * 0.03);
+    for (let row = 0; row < 3; row++) {
+      const z = i * CHUNK + 4 + row * 20 + r() * 4;
+      const free = Math.floor(r() * 3) - 1;
+      for (let lane = -1; lane <= 1; lane++) {
+        if (lane === free || r() > busy) continue;
+        const p = r();
+        const type = p < 0.4 ? 'train' : p < 0.7 ? 'low' : 'high';
+        obs.push(makeObs(type, lane, z, `${i}-${n++}`));
+        if (type === 'low' && r() < 0.5)
+          for (let c = 0; c < 3; c++) coins.push({ lane, z: z - 1.6 + c * 1.6, y: 2.0, id: `${i}-${n++}` });
+      }
+      if (r() < 0.75)
+        for (let c = 0; c < 6; c++) coins.push({ lane: free, z: z - 11 + c * 1.6, y: 0.9, id: `${i}-${n++}` });
+    }
+  }
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < CHUNK; k += 9) {
+      const w = 3 + r() * 4;
+      bldg.push({
+        x: side * (5.2 + w / 2 + r() * 2), z: i * CHUNK + k + r() * 2,
+        w, d: 5 + r() * 3, h: 4 + r() * 14,
+        c: C.buildings[Math.floor(r() * C.buildings.length)],
+      });
+    }
+  }
+  ch = { obs, coins, bldg };
+  chunks.set(i, ch);
+  return ch;
+}
+
+function chunksIn(z0, z1) {
+  const out = [];
+  for (let i = Math.max(0, Math.floor(z0 / CHUNK)); i <= Math.floor(z1 / CHUNK); i++) out.push(getChunk(i));
+  return out;
+}
+
+// ---- players ---------------------------------------------------------------
+const players = [
+  { name: 'P1', rgb: [60, 160, 255], css: '#3ca0ff', keys: { left: 'KeyA', right: 'KeyD', jump: 'KeyW', slide: 'KeyS' }, label: 'W A S D' },
+  { name: 'P2', rgb: [255, 80, 120], css: '#ff5078', keys: { left: 'ArrowLeft', right: 'ArrowRight', jump: 'ArrowUp', slide: 'ArrowDown' }, label: 'Arrow keys' },
+];
+
+function resetPlayer(p) {
+  Object.assign(p, {
+    lane: 0, x: 0, camX: 0, y: 0, vy: 0, slide: 0, z: 0,
+    hearts: 3, inv: 0, coins: 0, meter: 0, shake: 0,
+    collected: new Set(), hit: new Set(), extra: [], msgs: [],
+  });
+}
+players.forEach(resetPlayer);
+
+let state = 'menu';     // menu | countdown | play | over
+let countdown = 0, gameT = 0, speed = 0, attackN = 0, result = null;
+
+function startGame() {
+  seed = (Math.random() * 1e9) | 0;
+  chunks.clear();
+  players.forEach(resetPlayer);
+  gameT = 0; speed = 0; attackN = 0; result = null;
+  countdown = 3; state = 'countdown';
+}
+
+function say(p, text, color) { p.msgs.push({ text, color, t: 1.4 }); }
+
+function act(p, action) {
+  if (state !== 'play' || p.hearts <= 0) return;
+  if (action === 'left' && p.lane > -1) p.lane--;
+  else if (action === 'right' && p.lane < 1) p.lane++;
+  else if (action === 'jump' && p.y < 0.05) { p.vy = JUMP_V; p.slide = 0; }
+  else if (action === 'slide') { p.slide = 0.65; if (p.y > 0.05) p.vy = -18; }
+}
+
+function attack(from, to) {
+  if (to.hearts <= 0) return;
+  const type = Math.random() < 0.5 ? 'low' : 'high';
+  const o = makeObs(type, to.lane, to.z + Math.max(18, speed * 1.3), 'a' + attackN++);
+  o.attack = true;
+  to.extra.push(o);
+  say(from, 'ATTACK SENT!', '#d9a6ff');
+  say(to, 'INCOMING!', '#d9a6ff');
+}
+
+function updatePlayer(p, i, dt) {
+  const opp = players[1 - i];
+  p.z += speed * dt;
+  p.x += (p.lane * LANE_W - p.x) * Math.min(1, dt * 15);
+  p.vy -= GRAVITY * dt;
+  p.y += p.vy * dt;
+  if (p.y < 0) { p.y = 0; p.vy = 0; }
+  p.slide -= dt;
+  p.inv -= dt;
+  const height = (p.slide > 0 && p.y < 0.05) ? SLIDE_H : STAND_H;
+
+  // obstacles
+  p.extra = p.extra.filter(o => o.z + o.len > p.z - 10);
+  const near = chunksIn(p.z - 10, p.z + 10);
+  const check = o => {
+    if (p.hit.has(o.id)) return;
+    if (Math.abs(o.lane * LANE_W - p.x) > 1.25) return;
+    if (p.z + 0.35 < o.z || p.z - 0.35 > o.z + o.len) return;
+    if (p.y >= o.y0 + o.h || p.y + height <= o.y0) return;
+    p.hit.add(o.id);
+    if (p.inv > 0) return;
+    p.hearts--; p.inv = 1.6; p.shake = 0.35;
+    say(p, p.hearts > 0 ? 'OUCH!' : 'CRASHED!', '#ff6b6b');
+  };
+  for (const ch of near) ch.obs.forEach(check);
+  p.extra.forEach(check);
+
+  // coins
+  for (const ch of near) for (const c of ch.coins) {
+    if (p.collected.has(c.id)) continue;
+    if (Math.abs(c.lane * LANE_W - p.x) < 1 && Math.abs(c.z - p.z) < 0.8 && Math.abs(c.y - (p.y + height / 2)) < 1.3) {
+      p.collected.add(c.id);
+      p.coins++; p.meter++;
+      if (p.meter >= COINS_PER_ATTACK) { p.meter = 0; attack(p, opp); }
+    }
+  }
+}
+
+const score = p => Math.floor(p.z) + p.coins * 10;
+
+function update(dt) {
+  if (state === 'countdown') {
+    countdown -= dt;
+    if (countdown <= 0) { state = 'play'; speed = START_SPEED; }
+  } else if (state === 'play') {
+    gameT += dt;
+    speed = Math.min(MAX_SPEED, START_SPEED + gameT * ACCEL);
+    players.forEach((p, i) => updatePlayer(p, i, dt));
+    const dead = players.filter(p => p.hearts <= 0);
+    if (dead.length) {
+      state = 'over';
+      if (dead.length === 2) {
+        const [a, b] = players.map(score);
+        result = a === b ? null : players[a > b ? 0 : 1];
+      } else result = players.find(p => p.hearts > 0);
+    }
+  }
+  for (const p of players) {
+    p.shake = Math.max(0, p.shake - dt);
+    p.camX += (p.x * 0.7 - p.camX) * Math.min(1, dt * 8);
+    p.msgs.forEach(m => m.t -= dt);
+    p.msgs = p.msgs.filter(m => m.t > 0);
+  }
+}
+
+// ---- input -----------------------------------------------------------------
+addEventListener('keydown', e => {
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  if ((e.code === 'Space' || e.code === 'Enter') && (state === 'menu' || state === 'over')) { startGame(); return; }
+  for (const p of players) for (const [action, code] of Object.entries(p.keys)) if (code === e.code) act(p, action);
+});
+
+// touch: swipe inside your own half of the screen
+const touches = new Map();
+addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) touches.set(t.identifier, { x: t.clientX, y: t.clientY });
+}, { passive: false });
+addEventListener('touchend', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const s = touches.get(t.identifier); touches.delete(t.identifier);
+    if (!s) continue;
+    if (state === 'menu' || state === 'over') { startGame(); return; }
+    const side = W >= H ? (s.x < W / 2 ? 0 : 1) : (s.y < H / 2 ? 0 : 1);
+    const dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) act(players[side], 'jump');
+    else if (Math.abs(dx) > Math.abs(dy)) act(players[side], dx < 0 ? 'left' : 'right');
+    else act(players[side], dy < 0 ? 'jump' : 'slide');
+  }
+}, { passive: false });
+
+// ---- rendering -------------------------------------------------------------
+let cam = null;
+function proj(x, y, z) {
+  const s = cam.f / (z - cam.z);
+  return [cam.cx + (x - cam.x) * s, cam.hor + (cam.y - y) * s, s];
+}
+function quad(pts, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    const q = proj(pts[i][0], pts[i][1], pts[i][2]);
+    if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+const fogAt = z => clamp((z - cam.z - 35) / (VIEW - 35), 0, 1);
+
+// x = center, y = bottom, z = near face, w/h/d = size. Returns false if culled.
+function box(x, y, z, w, h, d, c, extra) {
+  const zn = cam.z + NEAR;
+  if (z + d < zn) return false;
+  const z0 = Math.max(z, zn), z1 = z + d;
+  const fg = fogAt(z0);
+  if (fg >= 1) return false;
+  const l = x - w / 2, r = x + w / 2, t = y + h;
+  if (cam.x < l) quad([[l, y, z0], [l, y, z1], [l, t, z1], [l, t, z0]], mix(c, 0.65, fg));
+  if (cam.x > r) quad([[r, y, z0], [r, y, z1], [r, t, z1], [r, t, z0]], mix(c, 0.65, fg));
+  if (cam.y > t) quad([[l, t, z0], [r, t, z0], [r, t, z1], [l, t, z1]], mix(c, 1.2, fg));
+  quad([[l, y, z0], [r, y, z0], [r, t, z0], [l, t, z0]], mix(c, 0.95, fg));
+  if (extra && z >= zn) extra(l, r, y, t, z0, fg);
+  return true;
+}
+
+function drawGround(vw, vh) {
+  const sky = ctx.createLinearGradient(0, 0, 0, cam.hor);
+  sky.addColorStop(0, '#2a62b8');
+  sky.addColorStop(1, `rgb(${FOG})`);
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, vw, cam.hor + 1);
+  const gr = ctx.createLinearGradient(0, cam.hor, 0, vh);
+  gr.addColorStop(0, `rgb(${FOG})`);
+  gr.addColorStop(0.25, '#7a9a5a');
+  gr.addColorStop(1, '#5a7d3e');
+  ctx.fillStyle = gr;
+  ctx.fillRect(0, cam.hor, vw, vh - cam.hor);
+
+  const zn = cam.z + NEAR, zf = cam.z + VIEW;
+  const half = LANE_W * 1.5 + 0.3;
+  quad([[-half, 0, zn], [half, 0, zn], [half, 0, zf], [-half, 0, zf]], mix(C.bed, 1, 0.15));
+  const step = 1.6;
+  for (let z = Math.ceil(zn / step) * step; z < cam.z + 70; z += step) {
+    const fg = fogAt(z);
+    for (let lane = -1; lane <= 1; lane++) {
+      const x = lane * LANE_W;
+      quad([[x - 0.9, 0, z], [x + 0.9, 0, z], [x + 0.9, 0, z + 0.4], [x - 0.9, 0, z + 0.4]], mix(C.tie, 1, fg));
+    }
+  }
+  for (let lane = -1; lane <= 1; lane++) for (const off of [-0.55, 0.55]) {
+    const x = lane * LANE_W + off;
+    quad([[x - 0.06, 0.01, zn], [x + 0.06, 0.01, zn], [x + 0.06, 0.01, zf], [x - 0.06, 0.01, zf]], mix(C.rail, 1, 0.1));
+  }
+  // haze over the far end of the track
+  const hz = ctx.createLinearGradient(0, cam.hor - 2, 0, cam.hor + vh * 0.06);
+  hz.addColorStop(0, `rgba(${FOG},1)`);
+  hz.addColorStop(1, `rgba(${FOG},0)`);
+  ctx.fillStyle = hz;
+  ctx.fillRect(0, cam.hor - 2, vw, vh * 0.06 + 2);
+}
+
+function drawObstacle(o) {
+  const x = o.lane * LANE_W;
+  const tint = o.attack ? C.attack : null;
+  if (o.type === 'train') {
+    box(x, 0, o.z, 2.0, o.h, o.len, C.train, (l, r, y, t, z0, fg) => {
+      quad([[l + 0.25, 1.5, z0 - 0.01], [r - 0.25, 1.5, z0 - 0.01], [r - 0.25, 2.3, z0 - 0.01], [l + 0.25, 2.3, z0 - 0.01]], mix([30, 40, 60], 1, fg));
+      quad([[l, 0.5, z0 - 0.01], [r, 0.5, z0 - 0.01], [r, 0.8, z0 - 0.01], [l, 0.8, z0 - 0.01]], mix(C.trainB, 1, fg));
+      for (const lx of [l + 0.4, r - 0.4]) {
+        const p = proj(lx, 1.0, z0 - 0.02);
+        ctx.fillStyle = mix([255, 240, 170], 1, fg);
+        ctx.beginPath(); ctx.arc(p[0], p[1], 0.14 * p[2], 0, 7); ctx.fill();
+      }
+    });
+  } else if (o.type === 'low') {
+    box(x, 0, o.z, 1.9, o.h, o.len, tint || C.low, (l, r, y, t, z0, fg) => {
+      quad([[l, 0.35, z0 - 0.01], [r, 0.35, z0 - 0.01], [r, 0.52, z0 - 0.01], [l, 0.52, z0 - 0.01]], mix([255, 255, 255], 1, fg));
+    });
+  } else {
+    box(x - 0.9, 0, o.z, 0.15, o.y0 + o.h, o.len, C.post);
+    box(x + 0.9, 0, o.z, 0.15, o.y0 + o.h, o.len, C.post);
+    box(x, o.y0, o.z, 2.0, o.h, o.len, tint || C.bar, (l, r, y, t, z0, fg) => {
+      quad([[l, y + 0.45, z0 - 0.01], [r, y + 0.45, z0 - 0.01], [r, y + 0.75, z0 - 0.01], [l, y + 0.75, z0 - 0.01]], mix([255, 255, 255], 1, fg));
+    });
+  }
+}
+
+function drawCoin(c, t) {
+  if (c.z < cam.z + NEAR) return;
+  const fg = fogAt(c.z);
+  if (fg >= 1) return;
+  const p = proj(c.lane * LANE_W, c.y, c.z);
+  const r = 0.35 * p[2];
+  const sx = Math.max(0.15, Math.abs(Math.cos(t * 4 + c.z)));
+  ctx.fillStyle = mix(C.coin, 1, fg);
+  ctx.beginPath(); ctx.ellipse(p[0], p[1], r * sx, r, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = mix([255, 240, 150], 1, fg);
+  ctx.beginPath(); ctx.ellipse(p[0], p[1], r * sx * 0.5, r * 0.5, 0, 0, 7); ctx.fill();
+}
+
+function drawRunner(p, t) {
+  // shadow
+  const s = proj(p.x, 0, p.z);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(s[0], s[1], 0.5 * s[2], 0.18 * s[2], 0, 0, 7); ctx.fill();
+  if (p.inv > 0 && Math.floor(p.inv * 12) % 2) return;
+  const c = p.rgb;
+  if (p.hearts <= 0) { // fallen over
+    box(p.x, 0, p.z - 0.8, 0.8, 0.45, 1.6, c);
+    return;
+  }
+  if (p.slide > 0 && p.y < 0.05) {
+    box(p.x, 0, p.z - 0.2, 0.7, 0.35, 1.0, C.pants);
+    box(p.x, 0.15, p.z - 0.6, 0.8, 0.45, 0.7, c);
+    box(p.x, 0.2, p.z - 0.9, 0.45, 0.4, 0.35, C.skin);
+    return;
+  }
+  const run = state === 'play' && p.y < 0.05 ? Math.sin(p.z * 1.3) * 0.28 : 0;
+  const y = p.y;
+  box(p.x - 0.18, y, p.z - 0.15 + run, 0.24, 0.75, 0.28, C.pants);
+  box(p.x + 0.18, y, p.z - 0.15 - run, 0.24, 0.75, 0.28, C.pants);
+  box(p.x - 0.5, y + 0.85, p.z - 0.1 - run, 0.18, 0.6, 0.2, c);
+  box(p.x + 0.5, y + 0.85, p.z - 0.1 + run, 0.18, 0.6, 0.2, c);
+  box(p.x, y + 0.75, p.z - 0.2, 0.78, 0.7, 0.4, c);
+  box(p.x, y + 1.45, p.z - 0.17, 0.44, 0.42, 0.36, C.skin);
+  box(p.x, y + 1.8, p.z - 0.2, 0.5, 0.12, 0.42, c); // cap
+}
+
+function drawView(p, vw, vh, t) {
+  const f = Math.min(vw * 0.8, vh * 0.95);
+  cam = { x: p.camX, y: CAM_H + p.y * 0.45, z: p.z - CAM_D, f, cx: vw / 2, hor: Math.max(vh * 0.12, vh * 0.84 - CAM_H * f / CAM_D) };
+  drawGround(vw, vh);
+
+  const items = [];
+  for (const ch of chunksIn(cam.z, cam.z + VIEW)) {
+    for (const b of ch.bldg) items.push({ z: b.z, draw: () => box(b.x, 0, b.z, b.w, b.h, b.d, b.c, (l, r, y, top, z0, fg) => {
+      for (let wy = 1.5; wy < top - 1; wy += 2.2) for (let wx = l + 0.6; wx < r - 0.8; wx += 1.3)
+        quad([[wx, wy, z0 - 0.01], [wx + 0.6, wy, z0 - 0.01], [wx + 0.6, wy + 1, z0 - 0.01], [wx, wy + 1, z0 - 0.01]], mix([255, 235, 180], 0.9, fg));
+    }) });
+    for (const o of ch.obs) items.push({ z: o.z, draw: () => drawObstacle(o) });
+    for (const c of ch.coins) if (!p.collected.has(c.id)) items.push({ z: c.z, draw: () => drawCoin(c, t) });
+  }
+  for (const o of p.extra) items.push({ z: o.z, draw: () => drawObstacle(o) });
+  items.push({ z: p.z - 0.3, draw: () => drawRunner(p, t) });
+  items.sort((a, b) => b.z - a.z);
+  for (const it of items) it.draw();
+}
+
+function heart(x, y, s, filled) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + s * 0.3);
+  ctx.bezierCurveTo(x, y, x - s * 0.5, y, x - s * 0.5, y + s * 0.3);
+  ctx.bezierCurveTo(x - s * 0.5, y + s * 0.6, x, y + s * 0.8, x, y + s);
+  ctx.bezierCurveTo(x, y + s * 0.8, x + s * 0.5, y + s * 0.6, x + s * 0.5, y + s * 0.3);
+  ctx.bezierCurveTo(x + s * 0.5, y, x, y, x, y + s * 0.3);
+  ctx.fillStyle = filled ? '#ff4060' : 'rgba(0,0,0,0.35)';
+  ctx.fill();
+}
+
+function text(str, x, y, size, color, align = 'left', weight = 800) {
+  ctx.font = `${weight} ${size}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  ctx.lineWidth = Math.max(2, size / 7); ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.strokeText(str, x, y);
+  ctx.fillStyle = color; ctx.fillText(str, x, y);
+}
+
+function drawHUD(p, vw, vh) {
+  const u = Math.max(14, Math.min(vw, vh) * 0.045);
+  // name tag
+  ctx.fillStyle = p.css;
+  ctx.fillRect(u * 0.6, u * 0.6, u * 2.4, u * 1.4);
+  text(p.name, u * 1.8, u * 1.32, u * 0.95, '#fff', 'center');
+  for (let i = 0; i < 3; i++) heart(u * 3.9 + i * u * 1.4, u * 0.85, u, i < p.hearts);
+  text(String(score(p)), vw - u * 0.7, u * 1.3, u * 1.1, '#fff', 'right');
+  // coin / attack meter
+  const mx = u * 0.6, my = u * 2.4, mw = Math.min(vw * 0.4, u * 9), mh = u * 0.55;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(mx, my, mw, mh);
+  ctx.fillStyle = '#b46cff'; ctx.fillRect(mx, my, mw * p.meter / COINS_PER_ATTACK, mh);
+  text(`● ${p.coins}   ATTACK ${p.meter}/${COINS_PER_ATTACK}`, mx + 6, my + mh / 2, u * 0.5, '#fff', 'left', 700);
+  // messages
+  p.msgs.forEach((m, k) => {
+    ctx.globalAlpha = clamp(m.t * 2, 0, 1);
+    text(m.text, vw / 2, vh * 0.3 + k * u * 1.8 - (1.4 - m.t) * u, u * 1.6, m.color, 'center');
+    ctx.globalAlpha = 1;
+  });
+  if (state === 'countdown') text(String(Math.ceil(countdown)), vw / 2, vh * 0.4, u * 5, '#fff', 'center', 900);
+  if (state === 'over') {
+    const won = result === p, tie = result === null;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, vw, vh);
+    text(tie ? 'DRAW' : won ? 'WINNER!' : 'DEFEATED', vw / 2, vh * 0.38, u * 2.6, tie ? '#fff' : won ? '#ffd23f' : '#ff6b6b', 'center', 900);
+    text(`Score ${score(p)}  ·  ${p.coins} coins`, vw / 2, vh * 0.38 + u * 2.4, u * 0.9, '#fff', 'center', 700);
+  }
+}
+
+function drawMenu() {
+  ctx.fillStyle = 'rgba(10,15,30,0.72)';
+  ctx.fillRect(0, 0, W, H);
+  const u = Math.max(14, Math.min(W, H) * 0.035);
+  text('RAIL RUSH 1v1', W / 2, H * 0.2, u * 2.6, '#ffd23f', 'center', 900);
+  text('Outrun your rival. Last runner standing wins.', W / 2, H * 0.2 + u * 2.3, u * 0.8, '#fff', 'center', 600);
+  const col = (p, x) => {
+    text(p.name, x, H * 0.44, u * 1.4, p.css, 'center', 900);
+    text(p.label, x, H * 0.44 + u * 1.6, u * 0.85, '#fff', 'center', 700);
+  };
+  col(players[0], W * 0.3);
+  col(players[1], W * 0.7);
+  const lines = [
+    'Left / Right: switch lane   ·   Up: jump   ·   Down: slide',
+    'Jump the orange barriers, slide under the red bars, dodge the trains.',
+    `Every ${COINS_PER_ATTACK} coins drops a purple barrier in front of your rival.`,
+    '3 hearts each — lose them all and you lose.',
+  ];
+  lines.forEach((l, i) => text(l, W / 2, H * 0.62 + i * u * 1.3, u * 0.65, '#dde', 'center', 600));
+  if (Math.floor(performance.now() / 500) % 2 === 0)
+    text('Press SPACE (or tap) to start', W / 2, H * 0.88, u * 1.0, '#fff', 'center', 800);
+}
+
+function render(t) {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const sideBySide = W >= H;
+  const vps = sideBySide ? [[0, 0, W / 2, H], [W / 2, 0, W / 2, H]] : [[0, 0, W, H / 2], [0, H / 2, W, H / 2]];
+  players.forEach((p, i) => {
+    const [x, y, w, h] = vps[i];
+    const sh = p.shake > 0 ? (Math.random() - 0.5) * p.shake * 30 : 0;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    ctx.translate(x + sh, y + sh);
+    drawView(p, w, h, t);
+    ctx.translate(-sh, -sh);
+    if (state !== 'menu') drawHUD(p, w, h);
+    ctx.restore();
+  });
+  ctx.fillStyle = '#111';
+  if (sideBySide) ctx.fillRect(W / 2 - 2, 0, 4, H); else ctx.fillRect(0, H / 2 - 2, W, 4);
+  if (state === 'menu') drawMenu();
+  if (state === 'over') {
+    const u = Math.max(14, Math.min(W, H) * 0.035);
+    if (Math.floor(performance.now() / 500) % 2 === 0)
+      text('SPACE / tap for a rematch', W / 2, H * 0.92, u * 0.9, '#fff', 'center', 800);
+  }
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  render(now / 1000);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
