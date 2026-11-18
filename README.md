@@ -1,8 +1,8 @@
-# Rail Rush 1v1
+# Brainrot Blasters 1v1
 
-A two-player, split-screen endless runner duel in a single HTML file — no build step, no dependencies.
+A two-player, split-screen space runner in a single HTML file — no build step, no dependencies.
 
-**Play:** open `index.html` in a browser.
+**Play:** open `index.html` in a browser, click the game, press **Space**.
 
 | | Player 1 | Player 2 |
 |---|---|---|
@@ -10,10 +10,14 @@ A two-player, split-screen endless runner duel in a single HTML file — no buil
 | Jump | W | ↑ |
 | Slide (fast-fall in the air) | S | ↓ |
 
-Press **Space** to start or rematch. On touch devices, swipe or tap in your own half of the screen.
+`M` toggles sound (sound effects + spoken Italian brainrot shouts). Touch: swipe or tap in your own half.
 
-## Rules
-- Both players run the same randomly generated track at the same, steadily increasing speed.
-- Jump the orange barriers, slide under the red bars, switch lanes to avoid trains.
-- Each player has 3 hearts. The first to lose all of them loses the round.
-- Every 10 coins drops a purple barrier right in front of your rival.
+## How it plays
+- Both players run the same randomly generated neon space highway at the same, increasing speed.
+- Your blaster fires nonstop. Shoot **Tung Tung Tung Sahur**, **Ballerina Cappuccina**, **Cappuccino Assassino** and **Tralalero Tralala** as they charge at you; quick kills build a combo multiplier.
+- Destroy asteroid rocks, `?` crates (+3 coins) and bombs. Freighters can't be destroyed: dodge them. Slide under red laser gates.
+- **Bombardiro Crocodilo** flies over now and then and drops bombs on the track.
+- Power-ups: Espresso (rapid fire), Triple shot, Shield, Magnet, +1 Heart.
+- Every 10 coins sends a brainrot squad at your rival.
+- The planet changes every ~700 m: Luna Station → Mars Canyon → Saturn Ringway → Neptune Deep → Toxic Zorb-9 → Candy Nebula → Black Hole, then loops.
+- 3 hearts each. First to lose them all loses.
