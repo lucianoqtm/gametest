@@ -101,13 +101,12 @@ const UPGRADES = {
 };
 
 const SKINS = [
-  { name: 'CLASSIC',     cost: 0,    suit: [236, 240, 250] },
-  { name: 'GOLD CHROME', cost: 150,  suit: [255, 205, 90],  acc: [255, 250, 230] },
-  { name: 'TUNG WOOD',   cost: 300,  suit: [200, 136, 74],  acc: [110, 70, 35], extra: 'wood' },
-  { name: 'CAPPUCCINO',  cost: 500,  suit: [242, 228, 208], acc: [120, 75, 40], extra: 'foam' },
-  { name: 'SHARK SUIT',  cost: 800,  suit: [70, 135, 235],  acc: [240, 245, 255], extra: 'fin' },
-  { name: 'CROC PILOT',  cost: 1200, suit: [90, 170, 60],   acc: [255, 210, 60], extra: 'goggles' },
-  { name: 'GALAXY',      cost: 2000, suit: [70, 40, 140],   acc: [255, 110, 220], extra: 'stars' },
+  { kind: 'tung',       cost: 0,    ab: { icon: '🥁', name: 'SAHUR STORM',   duel: 'Send 3 Tung Tung Sahurs at your rival', solo: 'Smash everything ahead' } },
+  { kind: 'ballerina',  cost: 0,    ab: { icon: '🩰', name: 'PIROUETTE',     duel: '5s invincible spin + shield', solo: '5s invincible spin + shield' } },
+  { kind: 'assassino',  cost: 150,  ab: { icon: '🗡️', name: 'SHADOW STRIKE', duel: 'Slice every brainrot ahead + rapid fire', solo: 'Slice every brainrot ahead + rapid fire' } },
+  { kind: 'tralalero',  cost: 350,  ab: { icon: '🌊', name: 'TRALA WAVE',    duel: '8s triple shot + coin magnet', solo: '8s triple shot + coin magnet' } },
+  { kind: 'bombardino', cost: 600,  ab: { icon: '💣', name: 'CARPET BOMB',   duel: 'Carpet-bomb your rival’s track', solo: 'Blow up everything ahead' } },
+  { kind: 'lirili',     cost: 1000, ab: { icon: '⏰', name: 'TIME FREEZE',   duel: 'Jam your rival’s blaster for 4s', solo: '4s invincible time stop' } },
 ];
 
 // ---- saved progress (coin bank unlocks skins) ------------------------------
@@ -209,7 +208,7 @@ const SFX = {
 function speak(txt, force) {
   if (muted || !window.speechSynthesis) return;
   const now = performance.now();
-  if (!force && now - lastSpeak < 2600) return;
+  if (!force && now - lastSpeak < 4000) return;
   lastSpeak = now;
   try {
     const u = new SpeechSynthesisUtterance(txt);
@@ -428,7 +427,7 @@ const players = [
   { name: 'P1', rgb: [60, 170, 255], css: '#3caaff', keys: { left: 'KeyA', right: 'KeyD', jump: 'KeyW', slide: 'KeyS' }, label: 'W A S D' },
   { name: 'P2', rgb: [255, 80, 130], css: '#ff5082', keys: { left: 'ArrowLeft', right: 'ArrowRight', jump: 'ArrowUp', slide: 'ArrowDown' }, label: 'Arrow keys' },
 ];
-players.forEach((p, i) => { p.skin = unlocked(save.skins[i] || 0) ? (save.skins[i] || 0) : 0; });
+players.forEach((p, i) => { const k = save.skins[i]; p.skin = Number.isInteger(k) && k < SKINS.length && unlocked(k) ? k : i; });
 
 let mode = 'solo', active = [players[0]];
 const opp = p => mode === 'duel' ? players[1 - players.indexOf(p)] : null;
@@ -438,7 +437,7 @@ function resetPlayer(p, seed, firstPlanet) {
     seed, chunks: new Map(), route: [firstPlanet], mods: [], gateOpts: [], gateDone: [], gateHint: [],
     lane: 0, x: 0, camX: 0, y: 0, vy: 0, slide: 0, z: 0,
     maxHearts: BASE_HEARTS, hearts: BASE_HEARTS, inv: 0, coins: 0, meter: 0, shake: 0, points: 0, kills: 0, combo: 0, comboT: 0, bestCombo: 0,
-    fireT: 0, jam: 0, shots: 0, muzzle: 0, rapid: 0, triple: 0, magnet: 0, shield: false, stage: 0, flyby: -1,
+    fireT: 0, jam: 0, spin: 0, special: 0, shots: 0, muzzle: 0, rapid: 0, triple: 0, magnet: 0, shield: false, stage: 0, flyby: -1,
     up: {}, pick: null, reviveUsed: false, upgradesTaken: [], gatesTaken: [], seen: new Set([firstPlanet]),
     collected: new Set(), hit: new Set(), dead: new Set(), shout: new Set(), hp: new Map(), flash: new Map(),
     extra: [], bullets: [], parts: [], floats: [], msgs: [], T: [],
@@ -485,7 +484,7 @@ function act(p, action) {
 
 const attackCost = p => Math.max(4, COINS_PER_ATTACK - 3 * (p.up.saboteur || 0));
 function addCoins(p, n) {
-  p.coins += n; p.meter += n;
+  p.coins += n; p.meter += n; p.special = Math.min(100, p.special + 3 * n);
   while (p.meter >= attackCost(p)) {
     p.meter -= attackCost(p);
     const o = opp(p);
@@ -545,6 +544,7 @@ function destroy(p, t, byGun) {
     burst(p, t.x, 1.2, cz, [255, 255, 255], 8, 7);
     if (!byGun) return;
     p.kills++;
+    p.special = Math.min(100, p.special + 10);
     p.combo = p.comboT > 0 ? p.combo + 1 : 1;
     p.comboT = 2.5 + (p.up.combo || 0);
     p.bestCombo = Math.max(p.bestCombo, p.combo);
@@ -557,7 +557,7 @@ function destroy(p, t, byGun) {
     if (t.o.kind === 'tung') SFX.tung();
     if (t.o.kind === 'lirili') {
       if (o && o.hearts > 0) { o.jam = Math.max(o.jam, 3.5); say(o, '⏰ LIRILÌ JAMMED YOUR BLASTER!', '#9dffb0'); say(p, '⏰ TIME STOP! RIVAL JAMMED', '#9dffb0'); }
-      else if (!o) { p.inv = Math.max(p.inv, 3); say(p, '⏰ TIME STOP! INVINCIBLE', '#9dffb0'); }
+      else if (!o) { p.spin = Math.max(p.spin, 3); say(p, '⏰ TIME STOP! INVINCIBLE', '#9dffb0'); }
       speak('Lirilì Larilà!', true);
     }
     if (o && p.up.jammer && p.kills % 6 === 0 && o.hearts > 0) { o.jam = Math.max(o.jam, 1.5 * p.up.jammer); say(o, '⏰ JAMMED BY RIVAL!', '#9dffb0'); }
@@ -595,13 +595,53 @@ function damage(p, t) {
 
 function fire(p, sliding) {
   const by = p.y + (sliding ? 0.45 : 1.05);
-  let xs = [p.x + 0.3];
+  let xs = [p.x + 0.55];
   if (p.triple > 0) xs = [p.x - LANE_W, p.x, p.x + LANE_W];
-  else if (p.up.split && p.shots % 2 === 0) xs = [p.x - LANE_W, p.x + 0.3, p.x + LANE_W];
+  else if (p.up.split && p.shots % 2 === 0) xs = [p.x - LANE_W, p.x + 0.55, p.x + LANE_W];
   for (const x of xs) p.bullets.push({ x, y: by, z: p.z + 1.0 });
   p.muzzle = 0.05;
   if (p.shots++ % 3 === 0) SFX.shoot();
 }
+
+// the clickable special ability: every character has its own
+function smashAhead(p, all) {
+  for (const t of p.T) {
+    if (p.dead.has(t.o.id) || t.z < p.z || t.z > p.z + 60) continue;
+    if (t.cre || (all && t.breakable)) destroy(p, t, true);
+  }
+  SFX.bigboom();
+}
+function activateSpecial(p) {
+  if (state !== 'play' || p.hearts <= 0 || p.special < 100) return;
+  p.special = 0;
+  const S = SKINS[p.skin], o = opp(p), rival = o && o.hearts > 0;
+  say(p, `${S.ab.icon} ${S.ab.name}!`, '#ffe27a');
+  speak(KINDS[S.kind].say, true);
+  burst(p, p.x, 1.2, p.z + 1, p.rgb, 30, 10);
+  p.shake = 0.2;
+  SFX.power();
+  if (S.kind === 'tung') {
+    if (rival) {
+      for (let k = 0; k < 3; k++) o.extra.push({ cre: true, attack: true, kind: 'tung', lane: k - 1, z0: o.z + 80 + k * 5, id: 's' + spawnN++ });
+      say(o, '🥁 SAHUR STORM INCOMING!', '#ff9a5a');
+    } else smashAhead(p, true);
+    SFX.tung();
+  } else if (S.kind === 'ballerina') { p.spin = 5; p.shield = true; }
+  else if (S.kind === 'assassino') { smashAhead(p, false); p.rapid = Math.max(p.rapid, 6); }
+  else if (S.kind === 'tralalero') { p.triple = Math.max(p.triple, 8); p.magnet = Math.max(p.magnet, 8); }
+  else if (S.kind === 'bombardino') {
+    if (rival) {
+      o.flyby = 0;
+      for (let k = 0; k < 5; k++) o.extra.push(makeObs('bomb', Math.floor(Math.random() * 3) - 1, o.z + 45 + k * 9, 'b' + spawnN++));
+      say(o, '💣 CARPET BOMB INCOMING!', '#ff9a5a');
+    } else { p.flyby = 0; smashAhead(p, true); }
+  } else if (S.kind === 'lirili') {
+    if (rival) { o.jam = Math.max(o.jam, 4); say(o, '⏰ TIME FREEZE: BLASTER JAMMED', '#9dffb0'); }
+    else p.spin = Math.max(p.spin, 4);
+  }
+}
+const SPECIAL_KEYS = [['KeyE', 'KeyQ'], ['ShiftRight', 'Enter', 'NumpadEnter', 'Numpad0', 'Slash', 'Period', 'ControlRight']];
+const SPECIAL_SOLO = ['KeyE', 'KeyQ', 'ShiftLeft', 'ShiftRight', 'Enter'];
 
 function applyGate(p, si, g) {
   p.gateDone[si] = true;
@@ -651,13 +691,15 @@ function updatePlayer(p, dt) {
   p.vy -= (p.up.boots ? 22 : GRAVITY) * dt;
   p.y += p.vy * dt;
   if (p.y < 0) { p.y = 0; p.vy = 0; }
-  p.slide -= dt; p.inv -= dt; p.muzzle -= dt; p.jam -= dt;
+  p.slide -= dt; p.inv -= dt; p.muzzle -= dt; p.jam -= dt; p.spin -= dt;
+  p.special = Math.min(100, p.special + dt * 1.5);
   p.rapid = Math.max(0, p.rapid - dt); p.triple = Math.max(0, p.triple - dt); p.magnet = Math.max(0, p.magnet - dt);
   p.comboT -= dt; if (p.comboT <= 0) p.combo = 0;
   const sliding = p.slide > 0 && p.y < 0.05;
   const height = sliding ? SLIDE_H : STAND_H;
 
   p.extra = p.extra.filter(o => (o.cre ? crePos(o, p)[1] : o.z + o.len) > p.z - 10);
+  if (p.chunks.size > 10) { const lo = Math.floor(p.z / CHUNK) - 2; for (const k of [...p.chunks.keys()]) if (k < lo) p.chunks.delete(k); }
   const T = p.T = gather(p);
 
   // nonstop blaster
@@ -693,7 +735,7 @@ function updatePlayer(p, dt) {
     if (p.y >= t.y0 + t.h || p.y + height <= t.y0) continue;
     p.hit.add(id);
     if (t.cre || t.o.type === 'bomb') destroy(p, t, false);
-    if (p.inv > 0) continue;
+    if (p.inv > 0 || p.spin > 0) continue;
     if (p.shield) {
       p.shield = false; p.inv = 0.8;
       if (t.breakable && !p.dead.has(id)) destroy(p, t, false);
@@ -762,7 +804,7 @@ function finishRun() {
   save.bank += banked;
   newBest = mode === 'solo' && score(players[0]) > save.best;
   if (newBest) save.best = score(players[0]);
-  newUnlocks = SKINS.filter(s => s.cost > before && s.cost <= save.bank).map(s => s.name);
+  newUnlocks = SKINS.filter(s => s.cost > before && s.cost <= save.bank).map(s => KINDS[s.kind].name);
   persist();
 }
 
@@ -855,6 +897,10 @@ addEventListener('keydown', e => {
   if (state === 'summary') { if (go) goHome(); return; }
   if (state === 'over') return;
   if (state === 'upgrade' && go && mode === 'solo') { upgradeInput(players[0], 'jump'); return; }
+  if (state === 'play') {
+    if (mode === 'solo') { if (SPECIAL_SOLO.includes(e.code)) { activateSpecial(players[0]); return; } }
+    else for (let i = 0; i < 2; i++) if (SPECIAL_KEYS[i].includes(e.code)) { activateSpecial(players[i]); return; }
+  }
   for (const p of active) for (const [action, code] of Object.entries(p.keys)) if (code === e.code) act(p, action);
   if (mode === 'solo') {
     const alt = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'jump', ArrowDown: 'slide' }[e.code];
@@ -879,7 +925,7 @@ addEventListener('touchend', e => {
   for (const t of e.changedTouches) {
     const s = touches.get(t.identifier); touches.delete(t.identifier);
     if (!s) continue;
-    if (state !== 'play') { tap(t.clientX - rc.left, t.clientY - rc.top); continue; }
+    if (tap(t.clientX - rc.left, t.clientY - rc.top) || state !== 'play') continue;
     const side = mode === 'solo' ? 0 : W >= H ? (s.x < W / 2 ? 0 : 1) : (s.y < H / 2 ? 0 : 1);
     const dx = t.clientX - s.x, dy = t.clientY - s.y;
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) act(players[side], 'jump');
@@ -978,26 +1024,28 @@ function specular(x, y, rx, ry, a = 0.8) {
 }
 // additive glow, drawn from cached pre-rendered sprites (much faster than live gradients)
 const glowCache = new Map();
-function glowSprite(c, a) {
-  const q = v => Math.round(v / 12) * 12;
-  const key = `${q(c[0])},${q(c[1])},${q(c[2])},${Math.round(a * 10)}`;
+function glowSprite(c) {
+  const q = v => clamp(Math.round(v / 32) * 32, 0, 255);
+  const col = [q(c[0]), q(c[1]), q(c[2])], key = col.join(',');
   let cv2 = glowCache.get(key);
   if (!cv2) {
+    if (glowCache.size > 300) glowCache.clear();
     cv2 = document.createElement('canvas'); cv2.width = cv2.height = 64;
     const g2 = cv2.getContext('2d');
-    const col = [q(c[0]), q(c[1]), q(c[2])], al = Math.round(a * 10) / 10;
     const gr = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gr.addColorStop(0, rgba(col, al)); gr.addColorStop(0.4, rgba(col, al * 0.45)); gr.addColorStop(1, rgba(col, 0));
+    gr.addColorStop(0, rgba(col, 1)); gr.addColorStop(0.4, rgba(col, 0.45)); gr.addColorStop(1, rgba(col, 0));
     g2.fillStyle = gr; g2.fillRect(0, 0, 64, 64);
     glowCache.set(key, cv2);
   }
   return cv2;
 }
 function glow(x, y, r, c, a = 0.6) {
-  if (!(r > 0)) return;
-  const o = ctx.globalCompositeOperation;
+  if (!(r > 0) || a <= 0) return;
+  const o = ctx.globalCompositeOperation, ga = ctx.globalAlpha;
   ctx.globalCompositeOperation = 'lighter';
-  ctx.drawImage(glowSprite(c, Math.min(1, a)), x - r, y - r, r * 2, r * 2);
+  ctx.globalAlpha = ga * Math.min(1, a);
+  ctx.drawImage(glowSprite(c), x - r, y - r, r * 2, r * 2);
+  ctx.globalAlpha = ga;
   ctx.globalCompositeOperation = o;
 }
 // vertical cylinder-shaded rounded rect
@@ -1287,56 +1335,28 @@ function drawBombardinoSide(t) { // nose to the left, for the sky flyby
   for (let k = 0; k < 3; k++) glow(1.3 + k * 0.25, 0, 0.25 - k * 0.05, [255, 200, 120], 0.4);
 }
 
-// the runner, seen from behind
-function drawAstro(p) {
-  const SK = SKINS[p.skin] || SKINS[0], suit = SK.suit, acc = SK.acc || p.rgb;
-  const dead = p.hearts <= 0, sliding = p.slide > 0 && p.y < 0.05, air = p.y > 0.05;
+// the runner: your chosen brainrot, carrying a blaster
+function drawHero(p) {
+  const K = KINDS[SKINS[p.skin].kind];
+  const dead = p.hearts <= 0, sliding = p.slide > 0 && p.y < 0.05;
+  glow(0, -0.2, 1.1, p.rgb, 0.5);
+  ell(0, 0, 0.8, 0.24, null, rgba(p.rgb, 0.9), 0.06);
   ctx.save();
-  if (dead) { ctx.translate(0, -0.3); ctx.rotate(-1.45); ctx.translate(0, 0.9); }
-  else if (sliding) ctx.scale(1.12, 0.52);
-  const run = state === 'play' && !air && !dead ? Math.sin(p.z * 1.3) : 0;
-  const fl = -0.06 - Math.max(0, run) * 0.25, fr = -0.06 - Math.max(0, -run) * 0.25;
-  if (air) {
-    limb(-0.17, -0.8, -0.24, -0.38, 0.2, suit); orb(-0.24, -0.34, 0.13, 0.1, acc);
-    limb(0.17, -0.8, 0.24, -0.42, 0.2, suit); orb(0.24, -0.38, 0.13, 0.1, acc);
-  } else {
-    limb(-0.17, -0.8, -0.18, fl, 0.2, suit); orb(-0.18, fl + 0.02, 0.13, 0.09, acc);
-    limb(0.17, -0.8, 0.18, fr, 0.2, suit); orb(0.18, fr + 0.02, 0.13, 0.09, acc);
+  if (dead) { ctx.translate(0, -0.35); ctx.rotate(-1.45); ctx.translate(0, 1.0); }
+  else if (sliding) ctx.scale(1.15, 0.5);
+  ctx.scale(0.9, 0.9);
+  ctx.save(); K.draw(state === 'play' ? clock * 1.3 : clock * 0.5); ctx.restore();
+  if (!dead) {
+    shape([[0.48, -0.85], [0.74, -0.85], [0.68, -1.55], [0.55, -1.55]], LG(0.48, 0, 0.74, 0, [[0, '#2a2e3a'], [0.45, '#9aa2b8'], [1, '#1a1d26']]));
+    ln(0.61, -0.9, 0.61, -1.5, rgb(p.rgb), 0.035);
+    glow(0.61, -1.2, 0.18, p.rgb, 0.7);
+    if (p.muzzle > 0) { glow(0.61, -1.62, 0.4, [255, 230, 140], 0.95); star4(0.61, -1.62, 0.22, '#fffbe0'); }
   }
-  cyl(-0.38, -1.5, 0.76, 0.78, 0.2, suit);
-  rrect(-0.38, -0.86, 0.76, 0.1, 0.04, LG(-0.38, 0, 0.38, 0, [[0, shd(acc, 0.5)], [0.4, lit(acc, 0.4)], [1, shd(acc, 0.5)]]));
-  limb(-0.4, -1.38, -0.52, -0.95 + run * 0.08, 0.16, suit);
-  orb(-0.52, -0.92 + run * 0.08, 0.09, 0.09, acc);
-  limb(0.4, -1.38, 0.5, -1.02, 0.16, suit);
-  shape([[0.4, -0.96], [0.62, -0.96], [0.57, -1.52], [0.45, -1.52]], LG(0.4, 0, 0.62, 0, [[0, '#2a2e3a'], [0.45, '#8a92a8'], [1, '#1a1d26']]));
-  ln(0.51, -1.0, 0.51, -1.45, rgb(acc), 0.03);
-  glow(0.51, -1.2, 0.12, acc, 0.6);
-  if (p.muzzle > 0 && !dead) { glow(0.51, -1.58, 0.35, [255, 230, 140], 0.95); star4(0.51, -1.58, 0.2, '#fffbe0'); }
-  rrect(-0.28, -1.45, 0.56, 0.6, 0.12, LG(-0.28, 0, 0.28, 0, [[0, '#6a7080'], [0.35, '#e4e8f2'], [1, '#585e6c']]));
-  rrect(-0.18, -1.32, 0.36, 0.1, 0.04, rgb(acc));
-  glow(0, -1.27, 0.15, acc, 0.6);
-  for (const sd of [-1, 1]) {
-    orb(sd * 0.15, -0.84, 0.08, 0.06, [60, 64, 76]);
-    if (!dead) {
-      const fz = 0.14 + (air ? 0.22 : 0) + Math.random() * 0.06;
-      glow(sd * 0.15, -0.72, fz * 1.6, [90, 190, 255], 0.8);
-      ell(sd * 0.15, -0.74 + fz * 0.3, 0.05, fz * 0.5, 'rgba(230,250,255,0.9)');
-    }
-  }
-  orb(0, -1.77, 0.31, 0.3, suit);
-  ln(0, -2.05, 0, -1.52, rgb(p.rgb), 0.07);
-  ctx.strokeStyle = rgba(acc, 0.8); ctx.lineWidth = 0.025;
-  ctx.beginPath(); ctx.arc(0, -1.77, 0.3, -0.3, 1.2); ctx.stroke();
-  specular(-0.12, -1.92, 0.08, 0.1, 0.9);
-  if (SK.extra === 'fin') shape([[-0.06, -2.0], [0.04, -2.45], [0.16, -1.98]], LG(0, -2.45, 0, -2, [[0, '#9cc4ff'], [1, '#1d4fb0']]));
-  else if (SK.extra === 'foam') ell(0, -2.03, 0.26, 0.09, RG(0, -2.03, 0.26, [[0, '#fff8ec'], [1, '#d8b48a']]));
-  else if (SK.extra === 'wood') { ctx.strokeStyle = 'rgba(90,50,20,0.5)'; ctx.lineWidth = 0.02; for (const gx of [-0.15, 0.12]) { ctx.beginPath(); ctx.moveTo(gx, -2.0); ctx.lineTo(gx + 0.03, -1.55); ctx.stroke(); } }
-  else if (SK.extra === 'goggles') { rrect(-0.3, -1.86, 0.6, 0.1, 0.04, '#3a2a10'); for (const sd of [-1, 1]) orb(sd * 0.18, -1.81, 0.08, 0.07, [255, 210, 60]); }
-  else if (SK.extra === 'stars') sparkles(clock, 5, 0.45, -1.3, 0.6, 0.07);
   ctx.restore();
+  if (p.spin > 0) { glow(0, -1.1, 1.5, [255, 150, 220], 0.4); sparkles(clock, 8, 1.0, -1.2, 1.0, 0.13); }
   if (p.shield) {
-    ell(0, -0.95, 1.05, 1.15, RG(0, -0.95, 1.15, [[0, 'rgba(120,160,255,0.05)'], [0.8, 'rgba(120,170,255,0.2)'], [1, 'rgba(180,210,255,0.7)']]));
-    specular(-0.4, -1.6, 0.25, 0.15, 0.5);
+    ell(0, -1.05, 1.1, 1.3, RG(0, -1.05, 1.3, [[0, 'rgba(120,160,255,0.05)'], [0.8, 'rgba(120,170,255,0.2)'], [1, 'rgba(180,210,255,0.7)']]));
+    specular(-0.4, -1.8, 0.25, 0.15, 0.5);
   }
 }
 
@@ -1711,7 +1731,7 @@ function drawView(p, vw, vh) {
   } });
   if (state !== 'home') items.push({ z: p.z - 0.3, d: () => billboard(p.x, p.y, p.z, () => {
     if (p.inv > 0 && Math.floor(p.inv * 12) % 2) return;
-    drawAstro(p);
+    drawHero(p);
   }) });
   items.sort((a, b) => b.z - a.z);
   drawTrack(vw, vh);
@@ -1862,6 +1882,20 @@ function drawHUD(p, vw, vh, ox, oy) {
   if (p.jam > 0) { text(`⏰ BLASTER JAMMED ${p.jam.toFixed(1)}s`, mx, py + mh * 0.5, u * 0.6, '#9dffb0'); py += mh * 1.2; }
   const ups = Object.entries(p.up).map(([k, v]) => UPGRADES[k].icon + (v > 1 ? v : '')).join(' ');
   if (ups) text(ups, mx, py + mh * 0.6, u * 0.55, '#fff');
+  // special ability button (press E / Enter, or click / tap it)
+  {
+    const SK = SKINS[p.skin], R = u * 1.5, bx = vw - u * 2.2, by = vh - u * 2.6, ready = p.special >= 100;
+    if (ready) glow(bx, by, R * 2.2, [255, 210, 80], 0.45 + 0.25 * Math.sin(clock * 8));
+    ell(bx, by, R, R, RG(bx, by, R, [[0, ready ? '#5a3a10' : '#2a2a48'], [1, ready ? '#2a1404' : '#0e0e1e']]), 'rgba(255,255,255,0.3)', 2);
+    ctx.lineCap = 'round'; ctx.lineWidth = u * 0.22; ctx.strokeStyle = ready ? '#ffe27a' : rgb(p.rgb);
+    ctx.beginPath(); ctx.arc(bx, by, R * 0.88, -PI / 2, -PI / 2 + PI * 2 * p.special / 100); ctx.stroke();
+    ctx.globalAlpha = ready ? 1 : 0.45;
+    text(SK.ab.icon, bx, by, R * (ready ? 0.95 + 0.08 * Math.sin(clock * 10) : 0.85), '#fff', 'center');
+    ctx.globalAlpha = 1;
+    const key = mode === 'solo' ? 'E' : p === players[0] ? 'E' : 'ENTER';
+    text(ready ? `${SK.ab.name} [${key}]` : `${Math.floor(p.special)}%`, bx, by + R + u * 0.45, u * 0.48, ready ? '#ffe27a' : '#aab', 'center');
+    uiRects.push({ x: ox + bx - R, y: oy + by - R, w: R * 2, h: R * 2, fn: () => activateSpecial(p) });
+  }
   const pal = palette(p, p.z), md = p.mods[pal.i];
   text(`🪐 ${pal.cur.name}${md ? `  ·  ${MODS[md].icon} ${MODS[md].name}` : ''}`, u * 0.7, vh - u * 0.9, u * 0.6, rgb(pal.neon));
   p.msgs.forEach((m, k) => {
@@ -1901,13 +1935,15 @@ function drawTitle(y, u) {
 }
 
 function skinPicker(i, cx, cy, u) {
-  const p = players[i], SK = SKINS[p.skin], S = u * 1.6;
+  const p = players[i], SK = SKINS[p.skin], S = u * 1.35;
   glow(cx, cy - S, S * 1.7, p.rgb, 0.4);
   ctx.save(); ctx.translate(cx, cy + S * 0.15); ctx.scale(S, S);
-  drawAstro({ rgb: p.rgb, skin: p.skin, hearts: 1, slide: 0, y: 0, z: 0, shield: false, muzzle: 0 });
+  drawHero({ rgb: p.rgb, skin: p.skin, hearts: 1, slide: 0, y: 0, z: 0, shield: false, muzzle: 0, spin: 0 });
   ctx.restore();
-  text(`${p.name} · ${p.label}`, cx, cy - S * 2.3, u * 0.7, p.css, 'center');
-  text(SK.name, cx, cy + S * 0.75, u * 0.65, '#fff', 'center');
+  text(`${p.name} · ${p.label}`, cx, cy - S * 3.2, u * 0.7, p.css, 'center');
+  text(KINDS[SK.kind].name, cx, cy + S * 0.75, u * 0.6, '#fff', 'center');
+  const ab = `${SK.ab.icon} ${SK.ab.name}: ${homeSel ? SK.ab.duel : SK.ab.solo}`;
+  text(ab, cx, cy + S * 0.75 + u * 0.85, Math.min(u * 0.48, (homeSel ? W * 0.42 : W * 0.8) / (ab.length * 0.48)), '#ffe27a', 'center');
   button(cx - S * 2.3 - u * 1.2, cy - S * 1.1, u * 2.4, u * 1.5, i ? '◀ ←' : '◀ A', false, () => cycleSkin(i, -1));
   button(cx + S * 2.3 - u * 1.2, cy - S * 1.1, u * 2.4, u * 1.5, i ? '→ ▶' : 'D ▶', false, () => cycleSkin(i, 1));
 }
@@ -1930,11 +1966,11 @@ function drawHome() {
   button(W / 2 + u * 0.5, by, bw, bh, '⚔️ 1v1 DUEL', homeSel === 1, () => { if (homeSel === 1) startGame('duel'); else { homeSel = 1; SFX.click(); } });
   text(`🪙 COIN BANK ${save.bank}    🏆 BEST SOLO SCORE ${save.best}`, W / 2, by + bh + u * 1.1, u * 0.65, '#ffe14d', 'center');
   const nx = SKINS.find(s => s.cost > save.bank);
-  text(nx ? `🔓 Next skin: ${nx.name} at ${nx.cost} banked coins` : '🎉 All skins unlocked!', W / 2, by + bh + u * 2.1, u * 0.5, '#cfe', 'center');
+  text(nx ? `🔓 Next character: ${KINDS[nx.kind].name} at ${nx.cost} banked coins` : '🎉 All characters unlocked!', W / 2, by + bh + u * 2.1, u * 0.5, '#cfe', 'center');
   const sy = H * 0.8;
   if (homeSel === 1) { skinPicker(0, W * 0.3, sy, u); skinPicker(1, W * 0.7, sy, u); }
   else skinPicker(0, W / 2, sy, u);
-  const help = 'W/S or UP/DOWN: mode  ·  A/D and LEFT/RIGHT: skins  ·  SPACE / ENTER or click: start  ·  M: sound';
+  const help = 'W/S or UP/DOWN: mode  ·  A/D and LEFT/RIGHT: character  ·  SPACE / ENTER or click: start  ·  M: sound';
   text(help, W / 2, H * 0.965, Math.min(u * 0.5, W / (help.length * 0.48)), '#aab', 'center');
 }
 

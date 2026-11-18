@@ -23,4 +23,11 @@ In single player the arrow keys work too. `M` toggles sound (music, effects and 
 - **Coins:** in a duel every 10 coins sends a brainrot squad at your rival; solo it triggers a Brainrot Nuke. Killing Lirilì Larilà jams your rival's blaster (solo: makes you invincible for 3 s).
 - In a duel each player runs their own world (different start planet and layout).
 - After the run you get a score summary; press **Continue** to return to the home screen.
-- **Skins:** coins you collect are banked across runs and unlock skins (Gold Chrome, Tung Wood, Cappuccino, Shark Suit, Croc Pilot, Galaxy). Progress is saved in your browser.
+- **Play as a brainrot:** pick your character on the home screen. Tung Tung Tung Sahur and Ballerina Cappuccina are free. Coins you collect are banked across runs (saved in your browser) and unlock Cappuccino Assassino (150), Tralalero Tralala (350), Bombardino Crocodilo (600) and Lirilì Larilà (1000).
+- **Special ability:** each character has one. The round button at the bottom right charges from kills, coins and time; press **E** (P1 / solo) or **Enter** (P2), or click/tap the button, when it's full:
+  - 🥁 Tung Tung Tung Sahur, **Sahur Storm**: sends 3 Tungs at your rival (solo: smashes everything ahead)
+  - 🩰 Ballerina Cappuccina, **Pirouette**: 5 s invincible spin + shield
+  - 🗡️ Cappuccino Assassino, **Shadow Strike**: kills every brainrot ahead + rapid fire
+  - 🌊 Tralalero Tralala, **Trala Wave**: 8 s triple shot + coin magnet
+  - 💣 Bombardino Crocodilo, **Carpet Bomb**: drops 5 bombs on your rival's track (solo: blows up everything ahead)
+  - ⏰ Lirilì Larilà, **Time Freeze**: jams your rival's blaster for 4 s (solo: 4 s invincible)
