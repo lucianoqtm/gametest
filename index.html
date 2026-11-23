@@ -41,7 +41,7 @@ resize();
 const LANE_W = 2.2, CHUNK = 60, VIEW = 120, NEAR = 0.6;
 const CAM_H = 4.8, CAM_D = 5.5, CRE_S = 1.45;
 const GRAVITY = 30, JUMP_V = 10, STAND_H = 1.75, SLIDE_H = 0.8;
-const START_SPEED = 13, MAX_SPEED = 36, ACCEL = 0.22;
+const START_SPEED = 13, MAX_SPEED = 32, ACCEL = 0.18;
 const COINS_PER_ATTACK = 10, STAGE_CHUNKS = 7, STAGE_LEN = CHUNK * STAGE_CHUNKS;
 const BULLET_V = 130, BULLET_RANGE = 42, BASE_HEARTS = 3;
 const BOSS_DIST = 30;
@@ -74,7 +74,7 @@ const POWERS = {
   triple: { label: 'TRIPLE',   col: '#3de8ff', icon: '3', w: 0.25 },
   shield: { label: 'SHIELD',   col: '#5d8bff', icon: 'S', w: 0.22 },
   magnet: { label: 'MAGNET',   col: '#ff4f5e', icon: 'M', w: 0.15 },
-  heart:  { label: '+1 HEART', col: '#ff5fa8', icon: '♥', w: 0.05 },
+  heart:  { label: '+1 HEART', col: '#ff5fa8', icon: '♥', w: 0.08 },
 };
 const POWER_KEYS = Object.keys(POWERS);
 const DECO_KINDS = ['crystal', 'island', 'mushroom', 'bubble', 'asteroid'];
@@ -357,7 +357,7 @@ function getChunk(p, i) {
   const obs = [], coins = [], cres = [], pows = [], gates = [];
   let n = 0;
   if (i > 0) {
-    let busy = Math.min(0.88, 0.42 + i * 0.022);
+    let busy = Math.min(0.8, 0.4 + i * 0.018);
     if (isBossStage(si)) busy *= 0.5;   // keep the track readable during boss fights
     if (mod === 'hard') busy += 0.08;
     if (mod === 'chill') busy -= 0.15;
@@ -381,7 +381,7 @@ function getChunk(p, i) {
         for (let c = 0; c < 5; c++) coins.push({ lane: free, z: z - 13 + c * 1.6, y: 0.9, id: `${i}k${n++}` });
     }
     if (i >= 2 && li < STAGE_CHUNKS - 1) {
-      let count = (r() < 0.7 ? 1 : 0) + (r() < Math.min(0.6, i * 0.03) ? 1 : 0) + (r() < Math.min(0.55, (i - 10) * 0.03) ? 1 : 0);
+      let count = (r() < 0.7 ? 1 : 0) + (r() < Math.min(0.6, i * 0.03) ? 1 : 0) + (r() < Math.min(0.4, (i - 14) * 0.025) ? 1 : 0);
       if (isBossStage(si)) count = 0;
       if (mod === 'hard') count += 1;
       if (mod === 'chill') count = Math.max(0, count - 1);
@@ -423,7 +423,7 @@ function chunksIn(p, z0, z1) {
 // creatures walk toward the runner once it gets within 70 units
 function crePos(c, p) {
   const K = KINDS[c.kind];
-  const km = 1 + 0.07 * (c.si ?? p.stage);   // brainrots get faster on later planets
+  const km = 1 + 0.05 * Math.min(8, c.si ?? p.stage);   // brainrots get faster on later planets
   const z = c.z0 - K.k * km * Math.max(0, p.z - (c.z0 - 70)) - (c.charge || 0);
   let x = c.cx ?? c.lane * LANE_W;
   if (c.kind === 'ballerina') x += Math.sin(clock * 2.5 + c.z0) * 0.45;
@@ -522,7 +522,7 @@ function gather(p) {
     if (p.dead.has(o.id)) return;
     if (o.cre) {
       const [x, z] = crePos(o, p), K = KINDS[o.kind];
-      T.push({ o, x, z: z - 0.4, len: 0.8, y0: 0, h: K.h * 1.2, hpMax: Math.round(K.hp * (1 + 0.2 * (o.si ?? p.stage))), breakable: true, cre: true });
+      T.push({ o, x, z: z - 0.4, len: 0.8, y0: 0, h: K.h * 1.2, hpMax: Math.round(K.hp * (1 + 0.12 * (o.si ?? p.stage))), breakable: true, cre: true });
     } else {
       T.push({ o, x: o.lane * LANE_W, z: o.z, len: o.len, y0: o.y0, h: o.h, hpMax: o.hpMax, breakable: !!o.breakable, solid: !!o.solid, laser: o.type === 'laser' });
     }
@@ -654,7 +654,7 @@ const SPECIAL_SOLO = ['KeyE', 'KeyQ', 'ShiftLeft', 'ShiftRight', 'Enter'];
 // ---- boss fights (every 3rd planet) and random planet events --------------
 function spawnBoss(p, si) {
   const kind = KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lvl = Math.floor(si / 3);
-  const max = Math.round((45 + 35 * lvl) * (1 + 0.15 * (p.up.firepower || 0)));
+  const max = Math.round((40 + 28 * lvl) * (1 + 0.15 * (p.up.firepower || 0)));
   p.boss = { kind, si, lvl, hp: max, max, x: 0, lane: 0, moveT: 2, nextShot: 1.6, flash: -9, t: 0, throwT: 0 };
   say(p, `☠️ BOSS: GIGA ${KINDS[kind].name}`, '#ff6a6a');
   if (p === active[0]) speak(KINDS[kind].say, true);
@@ -685,10 +685,10 @@ function updateBoss(p, dt) {
   }
   B.x += clamp(B.lane * LANE_W - B.x, -5 * dt, 5 * dt);
   if (B.nextShot <= 0) {   // throws junk at your lane (sometimes two lanes)
-    B.nextShot = Math.max(0.55, 1.35 - 0.15 * B.lvl - B.t * 0.012);
+    B.nextShot = Math.max(0.75, 1.6 - 0.15 * B.lvl - B.t * 0.01);
     B.throwT = 0.3;
     const lanes = [p.lane];
-    if (Math.random() < 0.3 + 0.1 * B.lvl) lanes.push([-1, 0, 1].filter(l => l !== p.lane)[Math.floor(Math.random() * 2)]);
+    if (Math.random() < 0.2 + 0.08 * B.lvl) lanes.push([-1, 0, 1].filter(l => l !== p.lane)[Math.floor(Math.random() * 2)]);
     const type = ['rock', 'rock', 'bomb', 'laser'][Math.floor(Math.random() * 4)];
     for (const l of lanes) { const o = makeObs(type, l, p.z + BOSS_DIST - 3, 'x' + spawnN++); o.t0 = clock; p.extra.push(o); }
   }
@@ -716,7 +716,7 @@ function updateEvents(p, dt) {
   if (E.type === 'meteor') {        // rocks fall onto your lane
     const o = makeObs('rock', Math.random() < 0.6 ? p.lane : Math.floor(Math.random() * 3) - 1, p.z + 38, 'm' + spawnN++);
     o.t0 = clock; p.extra.push(o);
-    E.t = Math.max(0.45, 0.8 - 0.05 * si); if (++E.n >= 6 + si) p.event = null;
+    E.t = Math.max(0.6, 0.9 - 0.04 * si); if (++E.n >= Math.min(10, 5 + si)) p.event = null;
   } else if (E.type === 'stampede') {
     for (const l of [-1, 0, 1]) if (Math.random() < 0.7) p.extra.push({ cre: true, kind: KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lane: l, z0: p.z + 85, id: 'e' + spawnN++, si });
     E.t = 1.4; if (++E.n >= 3) p.event = null;
@@ -831,7 +831,7 @@ function updatePlayer(p, dt) {
       SFX.hit();
       continue;
     }
-    p.hearts--; p.inv = 1.5; p.shake = 0.4;
+    p.hearts--; p.inv = 1.8; p.shake = 0.4;
     SFX.hurt();
     if (p.hearts <= 0 && p.up.revive && !p.reviveUsed) {
       p.reviveUsed = true; p.hearts = 2; p.inv = 3;
@@ -873,8 +873,8 @@ function updatePlayer(p, dt) {
     const c = t.o, dz = t.z - p.z;
     if (c.kind === 'assassino' && dz < 42 && dz > 7) {           // dashes into your lane
       const cur = c.cx ?? c.lane * LANE_W, tx = p.lane * LANE_W;
-      c.cx = cur + clamp(tx - cur, -6 * dt, 6 * dt);
-    } else if (c.kind === 'tralalero' && dz < 34 && dz > 0) c.charge = (c.charge || 0) + speed * dt * 0.7;   // charges
+      c.cx = cur + clamp(tx - cur, -4 * dt, 4 * dt);
+    } else if (c.kind === 'tralalero' && dz < 34 && dz > 0) c.charge = (c.charge || 0) + speed * dt * 0.45;   // charges
     else if (c.kind === 'bombardino' && !c.dropped && dz < 55 && dz > 20) {   // drops a bomb in your lane
       c.dropped = true;
       p.extra.push(makeObs('bomb', p.lane, p.z + dz - 14, 'b' + spawnN++));
