@@ -1,6 +1,6 @@
 # Brainrot Blasters
 
-A solo or two-player split-screen space runner in a single HTML file — no build step, no dependencies. Everything (art and music) is generated in code in a glossy, oversaturated "AI brainrot" style. The caption font, Anton, loads from Google Fonts, with Impact as the fallback.
+A solo or two-player split-screen space runner in a single HTML file — no build step, no dependencies. Everything (art and music) is generated in code at runtime in a glossy, oversaturated "AI brainrot" style. The caption font, Anton, loads from Google Fonts, with Impact as the fallback.
 
 **Play:** open `index.html` in a browser, click the game, pick **Single Player** or **1v1 Duel**.
 
@@ -31,3 +31,7 @@ In single player the arrow keys work too. `M` toggles sound (music, effects and 
   - 🌊 Tralalero Tralala, **Trala Wave**: 8 s triple shot + coin magnet
   - 💣 Bombardino Crocodilo, **Carpet Bomb**: drops 5 bombs on your rival's track (solo: blows up everything ahead)
   - ⏰ Lirilì Larilà, **Time Freeze**: jams your rival's blaster for 4 s (solo: 4 s invincible)
+
+## Performance notes
+- Complex art (characters, scenery, items, portals) is drawn once into cached offscreen canvases and reused as images every frame; characters use 12-frame animation loops that are pre-built while the home screen is showing.
+- The render resolution adapts automatically: it drops when frames take too long and climbs back when there's headroom.
