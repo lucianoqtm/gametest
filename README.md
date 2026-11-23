@@ -14,7 +14,10 @@ In single player the arrow keys work too. `M` toggles sound (music, effects and 
 
 ## How it plays
 - Your blaster fires nonstop. Blast Tung Tung Tung Sahur, Ballerina Cappuccina, Cappuccino Assassino, Tralalero Tralala, Bombardino Crocodilo and Lirilì Larilà. Quick kills build a combo multiplier.
-- Destroy rocks, `?` crates and bombs; dodge freighters; slide under red lasers. 4 hearts to start.
+- Destroy rocks, `?` crates and bombs; dodge freighters; slide under red lasers. 3 hearts to start.
+- **It gets harder every planet:** higher top speed, denser obstacles, more brainrots with more health that move faster. Cappuccino Assassino dashes into your lane, Tralalero Tralala charges, Bombardino Crocodilo drops a bomb in front of you.
+- **Boss fight every 3rd planet:** a giant brainrot hovers ahead, switches lanes and throws rocks, bombs and lasers at your lane. Shoot it down before you reach the portals for big points, 15 coins and a full special meter, or it escapes.
+- **Planet events:** other planets throw a random event at you halfway through: a meteor shower aimed at your lane, a brainrot stampede, or a laser gauntlet with one moving free lane.
 - **Route portals:** every planet (~25 s) ends with three portals. Each leads to a different planet with a modifier:
   - ⚔️ **Danger Zone**: more brainrots, +50% kill points (high risk, high score)
   - 🪙 **Gold Rush**: coins everywhere, more freighters (more attacks/nukes, faster skin unlocks)

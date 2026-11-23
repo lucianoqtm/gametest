@@ -41,9 +41,11 @@ resize();
 const LANE_W = 2.2, CHUNK = 60, VIEW = 120, NEAR = 0.6;
 const CAM_H = 4.8, CAM_D = 5.5, CRE_S = 1.45;
 const GRAVITY = 30, JUMP_V = 10, STAND_H = 1.75, SLIDE_H = 0.8;
-const START_SPEED = 12, MAX_SPEED = 28, ACCEL = 0.17;
+const START_SPEED = 13, MAX_SPEED = 36, ACCEL = 0.22;
 const COINS_PER_ATTACK = 10, STAGE_CHUNKS = 7, STAGE_LEN = CHUNK * STAGE_CHUNKS;
-const BULLET_V = 130, BULLET_RANGE = 42, BASE_HEARTS = 4;
+const BULLET_V = 130, BULLET_RANGE = 42, BASE_HEARTS = 3;
+const BOSS_DIST = 30;
+const isBossStage = si => si % 3 === 2;
 const PI = Math.PI;
 
 const STAGES = [
@@ -72,7 +74,7 @@ const POWERS = {
   triple: { label: 'TRIPLE',   col: '#3de8ff', icon: '3', w: 0.25 },
   shield: { label: 'SHIELD',   col: '#5d8bff', icon: 'S', w: 0.22 },
   magnet: { label: 'MAGNET',   col: '#ff4f5e', icon: 'M', w: 0.15 },
-  heart:  { label: '+1 HEART', col: '#ff5fa8', icon: '♥', w: 0.08 },
+  heart:  { label: '+1 HEART', col: '#ff5fa8', icon: '♥', w: 0.05 },
 };
 const POWER_KEYS = Object.keys(POWERS);
 const DECO_KINDS = ['crystal', 'island', 'mushroom', 'bubble', 'asteroid'];
@@ -355,7 +357,8 @@ function getChunk(p, i) {
   const obs = [], coins = [], cres = [], pows = [], gates = [];
   let n = 0;
   if (i > 0) {
-    let busy = Math.min(0.75, 0.38 + i * 0.018);
+    let busy = Math.min(0.88, 0.42 + i * 0.022);
+    if (isBossStage(si)) busy *= 0.5;   // keep the track readable during boss fights
     if (mod === 'hard') busy += 0.08;
     if (mod === 'chill') busy -= 0.15;
     const fr = mod === 'gold' ? 0.42 : 0.28;
@@ -378,11 +381,12 @@ function getChunk(p, i) {
         for (let c = 0; c < 5; c++) coins.push({ lane: free, z: z - 13 + c * 1.6, y: 0.9, id: `${i}k${n++}` });
     }
     if (i >= 2 && li < STAGE_CHUNKS - 1) {
-      let count = (r() < 0.6 ? 1 : 0) + (r() < Math.min(0.5, i * 0.03) ? 1 : 0) + (i > 14 && r() < 0.4 ? 1 : 0);
+      let count = (r() < 0.7 ? 1 : 0) + (r() < Math.min(0.6, i * 0.03) ? 1 : 0) + (r() < Math.min(0.55, (i - 10) * 0.03) ? 1 : 0);
+      if (isBossStage(si)) count = 0;
       if (mod === 'hard') count += 1;
       if (mod === 'chill') count = Math.max(0, count - 1);
       for (let k = 0; k < count; k++)
-        cres.push({ cre: true, kind: pick(r, KIND_KEYS, KIND_W), lane: Math.floor(r() * 3) - 1, z0: i * CHUNK + 10 + r() * 45, id: `${i}c${k}` });
+        cres.push({ cre: true, kind: pick(r, KIND_KEYS, KIND_W), lane: Math.floor(r() * 3) - 1, z0: i * CHUNK + 10 + r() * 45, id: `${i}c${k}`, si });
     }
     if (rows.length > 1 && r() < (mod === 'chill' ? 0.65 : 0.4)) {
       const [z, free] = rows[1];
@@ -419,8 +423,9 @@ function chunksIn(p, z0, z1) {
 // creatures walk toward the runner once it gets within 70 units
 function crePos(c, p) {
   const K = KINDS[c.kind];
-  const z = c.z0 - K.k * Math.max(0, p.z - (c.z0 - 70));
-  let x = c.lane * LANE_W;
+  const km = 1 + 0.07 * (c.si ?? p.stage);   // brainrots get faster on later planets
+  const z = c.z0 - K.k * km * Math.max(0, p.z - (c.z0 - 70)) - (c.charge || 0);
+  let x = c.cx ?? c.lane * LANE_W;
   if (c.kind === 'ballerina') x += Math.sin(clock * 2.5 + c.z0) * 0.45;
   return [x, z];
 }
@@ -440,7 +445,7 @@ function resetPlayer(p, seed, firstPlanet) {
     seed, chunks: new Map(), route: [firstPlanet], mods: [], gateOpts: [], gateDone: [], gateHint: [],
     lane: 0, x: 0, camX: 0, y: 0, vy: 0, slide: 0, z: 0,
     maxHearts: BASE_HEARTS, hearts: BASE_HEARTS, inv: 0, coins: 0, meter: 0, shake: 0, points: 0, kills: 0, combo: 0, comboT: 0, bestCombo: 0,
-    fireT: 0, jam: 0, spin: 0, special: 0, shots: 0, muzzle: 0, rapid: 0, triple: 0, magnet: 0, shield: false, stage: 0, flyby: -1,
+    fireT: 0, jam: 0, spin: 0, special: 0, shots: 0, muzzle: 0, rapid: 0, triple: 0, magnet: 0, shield: false, stage: 0, flyby: -1, boss: null, bossDone: [], bossKills: 0, eventDone: [], event: null,
     up: {}, pick: null, reviveUsed: false, upgradesTaken: [], gatesTaken: [], seen: new Set([firstPlanet]),
     collected: new Set(), hit: new Set(), dead: new Set(), shout: new Set(), hp: new Map(), flash: new Map(),
     extra: [], bullets: [], parts: [], floats: [], msgs: [], T: [],
@@ -505,7 +510,7 @@ function attack(from, to) {
   const n = 2 + (from.up.saboteur || 0);
   for (let k = 0; k < n; k++) {
     const lane = k === 0 ? to.lane : Math.floor(Math.random() * 3) - 1;
-    to.extra.push({ cre: true, attack: true, kind: KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lane, z0: to.z + 80 + k * 7, id: 'a' + spawnN++ });
+    to.extra.push({ cre: true, attack: true, kind: KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lane, z0: to.z + 80 + k * 7, id: 'a' + spawnN++, si: to.stage });
   }
   say(from, '😈 BRAINROT SQUAD SENT!', '#d9a6ff');
   say(to, '⚠️ INCOMING BRAINROT!', '#d9a6ff');
@@ -517,7 +522,7 @@ function gather(p) {
     if (p.dead.has(o.id)) return;
     if (o.cre) {
       const [x, z] = crePos(o, p), K = KINDS[o.kind];
-      T.push({ o, x, z: z - 0.4, len: 0.8, y0: 0, h: K.h * 1.2, hpMax: K.hp, breakable: true, cre: true });
+      T.push({ o, x, z: z - 0.4, len: 0.8, y0: 0, h: K.h * 1.2, hpMax: Math.round(K.hp * (1 + 0.2 * (o.si ?? p.stage))), breakable: true, cre: true });
     } else {
       T.push({ o, x: o.lane * LANE_W, z: o.z, len: o.len, y0: o.y0, h: o.h, hpMax: o.hpMax, breakable: !!o.breakable, solid: !!o.solid, laser: o.type === 'laser' });
     }
@@ -646,6 +651,82 @@ function activateSpecial(p) {
 const SPECIAL_KEYS = [['KeyE', 'KeyQ'], ['ShiftRight', 'Enter', 'NumpadEnter', 'Numpad0', 'Slash', 'Period', 'ControlRight']];
 const SPECIAL_SOLO = ['KeyE', 'KeyQ', 'ShiftLeft', 'ShiftRight', 'Enter'];
 
+// ---- boss fights (every 3rd planet) and random planet events --------------
+function spawnBoss(p, si) {
+  const kind = KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lvl = Math.floor(si / 3);
+  const max = Math.round((45 + 35 * lvl) * (1 + 0.15 * (p.up.firepower || 0)));
+  p.boss = { kind, si, lvl, hp: max, max, x: 0, lane: 0, moveT: 2, nextShot: 1.6, flash: -9, t: 0, throwT: 0 };
+  say(p, `☠️ BOSS: GIGA ${KINDS[kind].name}`, '#ff6a6a');
+  if (p === active[0]) speak(KINDS[kind].say, true);
+  SFX.bigboom();
+}
+function hitBoss(p, dmg, x) {
+  const B = p.boss;
+  B.hp -= dmg; B.flash = clock;
+  burst(p, x, 2.2, p.z + BOSS_DIST - 1, [255, 230, 150], 2, 5);
+  if (B.hp > 0) return;
+  const pts = 400 * (1 + B.lvl);
+  p.points += pts; p.bossKills++; p.special = 100;
+  addCoins(p, 15);
+  p.bossDone[B.si] = true; p.boss = null;
+  for (let k = 0; k < 3; k++) burst(p, B.x, 2.5, p.z + BOSS_DIST, KINDS[B.kind].col, 30, 14);
+  burst(p, B.x, 2.5, p.z + BOSS_DIST, [255, 240, 150], 30, 12);
+  float(p, B.x, 4, p.z + BOSS_DIST - 4, `+${pts}`, '#ffe14d');
+  say(p, `🏆 BOSS DEFEATED! +${pts} +15 🪙`, '#ffd23f');
+  if (p === active[0]) speak('Bombastico! Boss sconfitto!', true);
+  SFX.bigboom(); SFX.power();
+}
+function updateBoss(p, dt) {
+  const B = p.boss;
+  B.t += dt; B.moveT -= dt; B.nextShot -= dt; B.throwT -= dt;
+  if (B.moveT <= 0) {
+    B.lane = Math.random() < 0.5 ? p.lane : Math.floor(Math.random() * 3) - 1;
+    B.moveT = Math.max(0.7, 1.6 - 0.2 * B.lvl) + Math.random();
+  }
+  B.x += clamp(B.lane * LANE_W - B.x, -5 * dt, 5 * dt);
+  if (B.nextShot <= 0) {   // throws junk at your lane (sometimes two lanes)
+    B.nextShot = Math.max(0.55, 1.35 - 0.15 * B.lvl - B.t * 0.012);
+    B.throwT = 0.3;
+    const lanes = [p.lane];
+    if (Math.random() < 0.3 + 0.1 * B.lvl) lanes.push([-1, 0, 1].filter(l => l !== p.lane)[Math.floor(Math.random() * 2)]);
+    const type = ['rock', 'rock', 'bomb', 'laser'][Math.floor(Math.random() * 4)];
+    for (const l of lanes) { const o = makeObs(type, l, p.z + BOSS_DIST - 3, 'x' + spawnN++); o.t0 = clock; p.extra.push(o); }
+  }
+  if (p.z - B.si * STAGE_LEN > STAGE_LEN - 45) {   // reached the portals: the boss escapes
+    say(p, '💨 THE BOSS ESCAPED', '#bbb');
+    p.bossDone[B.si] = true; p.boss = null;
+  }
+}
+function updateEvents(p, dt) {
+  const si = Math.floor(p.z / STAGE_LEN), into = p.z - si * STAGE_LEN;
+  if (isBossStage(si)) {
+    if (!p.boss && !p.bossDone[si] && into > 45 && into < STAGE_LEN - 80) spawnBoss(p, si);
+    return;
+  }
+  if (si >= 1 && !p.eventDone[si] && into > 140) {
+    p.eventDone[si] = true;
+    const type = ['meteor', 'stampede', 'lasers'][Math.floor(Math.random() * 3)];
+    p.event = { type, n: 0, t: 0 };
+    say(p, { meteor: '☄️ METEOR SHOWER!', stampede: '🐾 BRAINROT STAMPEDE!', lasers: '⚡ LASER GAUNTLET!' }[type], '#ff9a5a');
+  }
+  const E = p.event;
+  if (!E) return;
+  E.t -= dt;
+  if (E.t > 0) return;
+  if (E.type === 'meteor') {        // rocks fall onto your lane
+    const o = makeObs('rock', Math.random() < 0.6 ? p.lane : Math.floor(Math.random() * 3) - 1, p.z + 38, 'm' + spawnN++);
+    o.t0 = clock; p.extra.push(o);
+    E.t = Math.max(0.45, 0.8 - 0.05 * si); if (++E.n >= 6 + si) p.event = null;
+  } else if (E.type === 'stampede') {
+    for (const l of [-1, 0, 1]) if (Math.random() < 0.7) p.extra.push({ cre: true, kind: KIND_KEYS[Math.floor(Math.random() * KIND_KEYS.length)], lane: l, z0: p.z + 85, id: 'e' + spawnN++, si });
+    E.t = 1.4; if (++E.n >= 3) p.event = null;
+  } else {                          // two lanes of lasers, one free lane that keeps moving
+    const free = Math.floor(Math.random() * 3) - 1;
+    for (const l of [-1, 0, 1]) if (l !== free) p.extra.push(makeObs('laser', l, p.z + 60, 'l' + spawnN++));
+    E.t = 1.1; if (++E.n >= 4) p.event = null;
+  }
+}
+
 function applyGate(p, si, g) {
   p.gateDone[si] = true;
   p.route[si + 1] = g.planet;
@@ -719,10 +800,14 @@ function updatePlayer(p, dt) {
       if (nz < z0 || b.z > z1) continue;
       if (z0 < best) { best = z0; hit = t; }
     }
-    if (hit) {
+    const B = p.boss, bz = p.z + BOSS_DIST;
+    if (hit && (!B || hit.z < bz)) {
       b.dead = true;
       if (hit.solid) burst(p, b.x, b.y, hit.z, [255, 230, 150], 3, 4);
       else damage(p, hit);
+    } else if (B && b.z <= bz && nz >= bz && Math.abs(b.x - B.x) < 1.8) {
+      b.dead = true;
+      hitBoss(p, 1 + (p.up.firepower || 0), b.x);
     }
     b.z = nz;
     if (b.z > p.z + BULLET_RANGE) b.dead = true;
@@ -746,7 +831,7 @@ function updatePlayer(p, dt) {
       SFX.hit();
       continue;
     }
-    p.hearts--; p.inv = 2.0; p.shake = 0.4;
+    p.hearts--; p.inv = 1.5; p.shake = 0.4;
     SFX.hurt();
     if (p.hearts <= 0 && p.up.revive && !p.reviveUsed) {
       p.reviveUsed = true; p.hearts = 2; p.inv = 3;
@@ -781,6 +866,22 @@ function updatePlayer(p, dt) {
     speak(KINDS[t.o.kind].say);
     if (t.o.kind === 'tung' && p === active[0]) SFX.tung();
   }
+
+  // enemy behaviours
+  for (const t of T) {
+    if (!t.cre) continue;
+    const c = t.o, dz = t.z - p.z;
+    if (c.kind === 'assassino' && dz < 42 && dz > 7) {           // dashes into your lane
+      const cur = c.cx ?? c.lane * LANE_W, tx = p.lane * LANE_W;
+      c.cx = cur + clamp(tx - cur, -6 * dt, 6 * dt);
+    } else if (c.kind === 'tralalero' && dz < 34 && dz > 0) c.charge = (c.charge || 0) + speed * dt * 0.7;   // charges
+    else if (c.kind === 'bombardino' && !c.dropped && dz < 55 && dz > 20) {   // drops a bomb in your lane
+      c.dropped = true;
+      p.extra.push(makeObs('bomb', p.lane, p.z + dz - 14, 'b' + spawnN++));
+    }
+  }
+  updateEvents(p, dt);
+  if (p.boss) updateBoss(p, dt);
 
   // planets & route portals
   const si = Math.floor(p.z / STAGE_LEN);
@@ -1697,8 +1798,9 @@ function drawTarget(p, t) {
       if (Math.sin(clock * 8) > 0) glow(0, -0.45, 0.25, [255, 40, 40], 0.9);
       if (FLASH) glow(0, -0.45, 0.8, [255, 255, 255], 0.9);
     });
-  } else { // magma rock
-    billboard(t.x, 0, o.z + 0.3, () => {
+  } else { // magma rock (falls from the sky when thrown by a boss or a meteor shower)
+    const drop = o.t0 ? clamp((o.t0 + 0.8 - clock) * 14, 0, 12) : 0;
+    billboard(t.x, drop, o.z + 0.3, () => {
       const v = Math.abs(Math.floor(o.z * 3)) % 3;
       blit(sprite(`rock:${v}`, 2.2, 1.5, 1.1, 1.15, 64, () => {
         softShadow(0.9);
@@ -1764,6 +1866,18 @@ function drawView(p, vw, vh) {
     for (const c of ch.coins) if (!p.collected.has(c.id)) items.push({ z: c.z, d: () => drawCoin(c) });
     for (const w of ch.pows) if (!p.collected.has(w.id)) items.push({ z: w.z, d: () => drawPower(w) });
     for (const g of ch.gates) if (g.z > cam.z + 1) items.push({ z: g.z, d: () => drawGate(p, g) });
+  }
+  if (p.boss) {
+    const B = p.boss;
+    items.push({ z: p.z + BOSS_DIST, d: () => billboard(B.x, 0.3 + Math.sin(clock * 2) * 0.25, p.z + BOSS_DIST, () => {
+      glow(0, -2.8, 3.4, [255, 60, 80], 0.45);
+      ctx.save();
+      const sc = 2.4 * (1 + Math.max(0, B.throwT) * 0.25);
+      ctx.scale(sc, sc);
+      blit(charSprite(B.kind, clock * 1.4));
+      ctx.restore();
+      if (clock - B.flash < 0.06) glow(0, -2.8, 2.6, [255, 255, 255], 0.7);
+    }) });
   }
   for (const t of p.T) if (t.z + t.len > cam.z && t.z < cam.z + VIEW) items.push({ z: t.z, d: () => drawTarget(p, t) });
   for (const b of p.bullets) items.push({ z: b.z, d: () => {
@@ -1945,6 +2059,12 @@ function drawHUD(p, vw, vh, ox, oy) {
   if (p.jam > 0) { text(`⏰ BLASTER JAMMED ${p.jam.toFixed(1)}s`, mx, py + mh * 0.5, u * 0.6, '#9dffb0'); py += mh * 1.2; }
   const ups = Object.entries(p.up).map(([k, v]) => UPGRADES[k].icon + (v > 1 ? v : '')).join(' ');
   if (ups) text(ups, mx, py + mh * 0.6, u * 0.55, '#fff');
+  if (p.boss) {
+    const B = p.boss, bw = vw * 0.42, bx0 = (vw - bw) / 2, by0 = vh - u * 1.5, bh = u * 0.5;
+    text(`☠️ GIGA ${KINDS[B.kind].name}`, vw / 2, by0 - u * 0.45, u * 0.55, '#ff8a8a', 'center');
+    rrect(bx0, by0, bw, bh, bh / 2, 'rgba(0,0,0,0.6)');
+    rrect(bx0, by0, Math.max(bh, bw * B.hp / B.max), bh, bh / 2, LG(bx0, 0, bx0 + bw, 0, [[0, '#ff2a4a'], [1, '#ff9a3a']]));
+  }
   // special ability button (press E / Enter, or click / tap it)
   {
     const SK = SKINS[p.skin], R = u * 1.5, bx = vw - u * 2.2, by = vh - u * 2.6, ready = p.special >= 100;
@@ -2045,7 +2165,7 @@ function drawSummary() {
   glow(W / 2, H * 0.09, W * 0.3, [255, 200, 80], 0.35);
   text(title, W / 2, H * 0.09, Math.min(u * 2, W / 14), '#ffd23f', 'center');
   sparklesScreen(W / 2, H * 0.09, W * 0.25, u);
-  const cw = Math.min(active.length === 1 ? W * 0.6 : W * 0.44, u * 18), top = H * 0.17, ph = u * 16.2;
+  const cw = Math.min(active.length === 1 ? W * 0.6 : W * 0.44, u * 18), top = H * 0.15, ph = u * 17.5;
   active.forEach((p, k) => {
     const cx = active.length === 1 ? W / 2 : W * (k ? 0.75 : 0.25);
     const win = mode === 'duel' && result === p;
@@ -2060,6 +2180,7 @@ function drawSummary() {
       ['💀 Brainrots blasted', `${p.kills}`, `+${p.points}`],
       ['🔥 Best combo', `x${p.bestCombo}`, ''],
       ['🪐 Planets visited', `${p.seen.size}`, ''],
+      ['☠️ Bosses defeated', `${p.bossKills}`, ''],
     ];
     const lx = cx - cw / 2 + u, rx = cx + cw / 2 - u, fs = Math.min(u * 0.7, cw / 24);
     rows.forEach((r, i) => {
