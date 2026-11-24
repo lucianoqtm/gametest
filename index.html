@@ -34,7 +34,9 @@ function resize() {
   cv.width = Math.round(W * RS); cv.height = Math.round(H * RS);
   mainCtx.setTransform(RS, 0, 0, RS, 0, 0);
 }
-addEventListener('resize', resize);
+// resizing wipes the canvas, so it is only ever done at the start of a frame, right before drawing
+let resizePending = false;
+addEventListener('resize', () => { resizePending = true; });
 resize();
 
 // ---- constants -------------------------------------------------------------
@@ -2230,15 +2232,17 @@ let last = performance.now(), emaDt = 16.7, emaWork = 6, lastAdj = 0;
 function frame(now) {
   const raw = now - last, dt = Math.min(0.05, raw / 1000);
   last = now;
+  if (resizePending) { resizePending = false; resize(); }
   const t0 = performance.now();
   if (state === 'home') warmCache(3);
   update(dt);
   render();
   const work = performance.now() - t0;
   if (raw < 100) { emaDt += (raw - emaDt) * 0.05; emaWork += (work - emaWork) * 0.05; }
-  if (now - lastAdj > 1500 && document.visibilityState === 'visible') {
-    if (emaDt > 21 && RS > 0.6) { RS = Math.max(0.6, RS - 0.15); resize(); lastAdj = now; }
-    else if (emaDt < 17.8 && emaWork < 7 && RS < MAX_RS) { RS = Math.min(MAX_RS, RS + 0.1); resize(); lastAdj = now; }
+  // adaptive resolution: drop quickly when frames are slow, climb back only after a long calm stretch
+  if (document.visibilityState === 'visible') {
+    if (emaDt > 22 && RS > 0.6 && now - lastAdj > 2000) { RS = Math.max(0.6, RS - 0.15); resizePending = true; lastAdj = now; }
+    else if (emaDt < 17.5 && emaWork < 6 && RS < MAX_RS && now - lastAdj > 8000) { RS = Math.min(MAX_RS, RS + 0.1); resizePending = true; lastAdj = now; }
   }
   requestAnimationFrame(frame);
 }
